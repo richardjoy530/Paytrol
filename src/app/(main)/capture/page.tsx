@@ -6,6 +6,7 @@ import CameraCapture from '@/components/CameraCapture';
 import { useTripStore } from '@/stores/tripStore';
 import { compressImage } from '@/lib/utils';
 import { useAuth } from '@/hooks/useAuth';
+import { ArrowLeftIcon } from '@/components/icons';
 
 export default function CapturePage() {
   const router = useRouter();
@@ -148,17 +149,29 @@ export default function CapturePage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="text-2xl font-black text-ink">Capture Dashboard</h1>
-        <p className="text-xs text-muted mt-1">
-          Photograph your car&apos;s dashboard showing the trip distance and average mileage.
-        </p>
+        {manualEntry && (
+          <button
+            type="button"
+            onClick={() => setManualEntry(false)}
+            className="-ml-1 mb-1 inline-flex h-11 items-center gap-1.5 px-1 text-sm font-semibold text-primary hover:text-primary-hover"
+          >
+            <ArrowLeftIcon size={16} />
+            Scan instead
+          </button>
+        )}
+        <h1 className="text-2xl font-black text-ink">{manualEntry ? 'Enter trip details' : 'Scan dashboard'}</h1>
+        {!manualEntry && (
+          <p className="text-xs text-muted mt-1">
+            Take a photo of your dashboard showing the trip distance and average mileage.
+          </p>
+        )}
       </header>
 
       {errorMsg && (
         <div role="alert" className="p-4 rounded-2xl bg-danger-soft border border-danger-line text-danger text-xs flex items-start gap-3">
           <span className="text-base" aria-hidden="true">!</span>
           <div className="space-y-1">
-            <p className="font-semibold text-danger">Couldn&apos;t read the photo</p>
+            {!manualEntry && <p className="font-semibold text-danger">Couldn&apos;t read the photo</p>}
             <p>{errorMsg}</p>
           </div>
         </div>
@@ -166,21 +179,7 @@ export default function CapturePage() {
 
       {manualEntry ? (
         <form onSubmit={handleManualSubmit} className="space-y-4">
-          <button
-            type="button"
-            onClick={() => setManualEntry(false)}
-            className="text-xs text-muted hover:text-ink-soft"
-          >
-            ← Back to capture options
-          </button>
-
           <div className="rounded-2xl border border-line bg-surface p-4 space-y-4">
-            <div>
-              <h2 className="text-sm font-bold text-ink">Enter trip details</h2>
-              <p className="mt-1 text-xs text-muted">
-                Add the numbers shown by your vehicle or trip record.
-              </p>
-            </div>
 
             <label htmlFor={distanceInputId} className="block space-y-1.5">
               <span className="text-xs font-medium text-muted">Distance driven (km)</span>

@@ -1,42 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { createDocument, queryDocuments, getDocument, updateDocument, deleteDocument, equalsIgnoreCase } from '@/lib/db';
-import type { Friendship, UserProfile } from '@/types';
-import { generateId } from '@/lib/utils';
-
-/**
- * Every friendship document involving this user, filtered in code so the
- * result is exact on both Cosmos and the in-memory store.
- */
-async function getRelationships(uid: string, email: string | undefined): Promise<Friendship[]> {
-  const docs = await queryDocuments<Friendship>(
-    'friendships',
-    {
-      $or: [
-        { fromUid: uid },
-        { toUid: uid },
-        ...(email ? [{ toEmail: equalsIgnoreCase(email) }] : []),
-      ],
-    }
-  );
-  const seen = new Set<string>();
-  return docs.filter((doc) => {
-    if (seen.has(doc.id)) return false;
-    seen.add(doc.id);
-    return (
-      doc.fromUid === uid ||
-      doc.toUid === uid ||
-      (!!email && doc.toEmail?.toLowerCase() === email && doc.fromUid !== uid)
-    );
-  });
-}
-
-/** A stable key for "the other person" so mutual invites collapse into one entry. */
-function otherPartyKey(doc: Friendship, uid: string): string {
-  if (doc.fromUid === uid) return doc.toUid || doc.toEmail.toLowerCase();
-  return doc.fromUid;
-}
+import { queryDocuments, getDocument, updateDocument, deleteDocument } from '@/lib/db';
+import type { Friendship } from '@/types';
+import { getRelationships, otherPartyKey, sendFriendInvite } from '@/lib/friend-invites';
 
 export async function GET() {
   try {
@@ -114,93 +81,14 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const targetEmail = body.email?.toLowerCase()?.trim();
-
-    if (!targetEmail || !targetEmail.includes('@')) {
-      return NextResponse.json(
-        { success: false, error: 'Please enter a valid email address.' },
-        { status: 400 }
-      );
-    }
-
-    if (session?.user?.email && targetEmail === session.user.email.toLowerCase()) {
-      return NextResponse.json(
-        { success: false, error: 'You cannot send a friend invite to yourself.' },
-        { status: 400 }
-      );
-    }
-
-    // Check if invite or friendship already exists, in either direction
-    const myEmail = session?.user?.email?.toLowerCase();
-    const existing = (await getRelationships(uid, myEmail)).filter((invite) =>
-      invite.fromUid === uid
-        ? invite.toEmail.toLowerCase() === targetEmail
-        : invite.fromEmail?.toLowerCase() === targetEmail
+    const result = await sendFriendInvite(
+      { uid, name: session?.user?.name, email: session?.user?.email, image: session?.user?.image },
+      typeof body.email === 'string' ? body.email : ''
     );
-
-    // They already invited us: accept that invite instead of creating a second one.
-    const theirInvite = existing.find((invite) => invite.status === 'pending' && invite.fromUid !== uid);
-    if (theirInvite && !existing.some((invite) => invite.status === 'accepted')) {
-      theirInvite.status = 'accepted';
-      theirInvite.toUid = uid;
-      theirInvite.updatedAt = new Date().toISOString();
-      const accepted = await updateDocument('friendships', theirInvite);
-      return NextResponse.json({
-        success: true,
-        data: accepted,
-        message: `${theirInvite.fromName || 'They'} had already invited you, so you're now friends.`,
-      });
+    if (!result.ok) {
+      return NextResponse.json({ success: false, error: result.error }, { status: result.status });
     }
-
-    if (existing.some((invite) => invite.status === 'accepted')) {
-      return NextResponse.json(
-        { success: false, error: 'You are already friends with this person!' },
-        { status: 400 }
-      );
-    }
-    if (existing.some((invite) => invite.status === 'pending')) {
-      return NextResponse.json(
-        { success: false, error: 'An invite is already pending with this person.' },
-        { status: 400 }
-      );
-    }
-    // A previously declined invite no longer blocks a new one.
-    for (const declined of existing.filter((invite) => invite.status === 'declined')) {
-      await deleteDocument('friendships', declined.id);
-    }
-
-    // Check if target user already exists in database
-    const targetUsers = await queryDocuments<UserProfile>(
-      'users',
-      { email: targetEmail }
-    );
-    const targetUser = targetUsers[0] || null;
-
-    const friendship: Friendship = {
-      id: generateId(),
-      fromUid: uid,
-      fromName: session?.user?.name || 'Driver',
-      fromEmail: myEmail || 'driver@paytrol.app',
-      fromPhoto: session?.user?.image || null,
-      toUid: targetUser?.id || null,
-      toEmail: targetEmail,
-      toName: targetUser?.displayName || targetEmail.split('@')[0],
-      toPhoto: targetUser?.photoURL || null,
-      status: 'pending',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    const created = await createDocument('friendships', friendship);
-
-    // No email is sent yet: the invite appears in the app when they sign in with this email.
-    return NextResponse.json({
-      success: true,
-      data: created,
-      message: targetUser
-        ? 'Invite sent. They’ll see it in Paytrol under Received.'
-        : 'Invite saved. It will appear when they sign in to Paytrol with this email.',
-    });
+    return NextResponse.json({ success: true, data: result.data, message: result.message });
   } catch (error: unknown) {
     console.error('Friends POST error:', error);
     return NextResponse.json(

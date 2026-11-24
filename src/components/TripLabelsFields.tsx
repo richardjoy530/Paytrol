@@ -1,6 +1,8 @@
 'use client';
 
 import { useId, useState } from 'react';
+import { BTN, BTN_SIZE } from '@/lib/ui';
+import { cn } from '@/lib/utils';
 import {
   cleanTripTag,
   TRIP_NAME_MAX_LENGTH,
@@ -59,7 +61,7 @@ export default function TripLabelsFields({
     <div className="space-y-3">
       <label htmlFor={nameId} className="block space-y-1.5">
         <span className="text-xs font-medium text-muted">
-          Trip name <span className="font-normal text-subtle">(optional)</span>
+          Trip name <span className="font-normal text-muted">(optional)</span>
         </span>
         <input
           id={nameId}
@@ -67,13 +69,13 @@ export default function TripLabelsFields({
           onChange={(event) => onNameChange(event.target.value)}
           maxLength={TRIP_NAME_MAX_LENGTH}
           placeholder="e.g. Office run, Goa weekend"
-          className="w-full rounded-xl border border-line bg-canvas px-3.5 py-3 text-sm text-ink outline-none focus:border-line-strong"
+          className="h-11 w-full rounded-xl border border-line bg-canvas px-3.5 text-sm text-ink outline-none focus:border-line-strong"
         />
       </label>
 
       <div className="space-y-1.5">
         <label htmlFor={tagId} className="block text-xs font-medium text-muted">
-          Tags <span className="font-normal text-subtle">(optional, up to {TRIP_TAGS_MAX})</span>
+          Tags <span className="font-normal text-muted">(optional, up to {TRIP_TAGS_MAX})</span>
         </label>
 
         {tags.length > 0 && (
@@ -94,7 +96,7 @@ export default function TripLabelsFields({
         )}
 
         {!atLimit && (
-          <div className="flex gap-2">
+          <div className="flex items-stretch gap-2">
             <input
               id={tagId}
               value={tagDraft}
@@ -111,13 +113,13 @@ export default function TripLabelsFields({
               maxLength={TRIP_TAG_MAX_LENGTH * 3}
               placeholder="office, weekend…"
               enterKeyHint="done"
-              className="min-w-0 flex-1 rounded-xl border border-line bg-canvas px-3 py-2.5 text-xs text-ink outline-none focus:border-line-strong"
+              className="h-11 min-w-0 flex-1 rounded-xl border border-line bg-canvas px-3.5 text-sm text-ink outline-none focus:border-line-strong"
             />
             <button
               type="button"
               onClick={commitDraft}
               disabled={!tagDraft.trim()}
-              className="rounded-xl border border-line px-3 py-2.5 text-xs font-semibold text-primary disabled:opacity-50"
+              className={cn(BTN.secondary, BTN_SIZE.md)}
             >
               Add
             </button>

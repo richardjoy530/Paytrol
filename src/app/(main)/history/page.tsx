@@ -7,6 +7,12 @@ import type { Friendship, GuestContact, Trip, TripParticipant } from '@/types';
 import { invalidate, prefetchData, RESOURCES, useCachedData } from '@/lib/data-cache';
 import { cleanTripName, collectTripTags, tripHasTag } from '@/lib/trip-labels';
 import TripLabelsFields from '@/components/TripLabelsFields';
+import { CheckIcon, PencilIcon, TrashIcon } from '@/components/icons';
+import PersonToggle from '@/components/PersonToggle';
+import QuickAddGuest from '@/components/QuickAddGuest';
+import { guestSubtitle } from '@/lib/people';
+import { BTN, BTN_SIZE } from '@/lib/ui';
+import { cn } from '@/lib/utils';
 
 export default function HistoryPage() {
   const { user } = useAuth();
@@ -38,6 +44,14 @@ export default function HistoryPage() {
   const [nameDraft, setNameDraft] = useState('');
   const [tagsDraft, setTagsDraft] = useState<string[]>([]);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
+
+  // Guests linked to someone who is already a friend are shown once, as the friend.
+  const friendUids = new Set(
+    friends
+      .map((friend) => (friend.fromUid === currentUserId ? friend.toUid : friend.fromUid))
+      .filter((uid): uid is string => Boolean(uid))
+  );
+  const availableGuests = guestContacts.filter((guest) => !guest.linkedUid || !friendUids.has(guest.linkedUid));
 
   const allTags = collectTripTags(trips);
   const activeTagFilter = tagFilter && allTags.some((tag) => tag.toLocaleLowerCase() === tagFilter.toLocaleLowerCase())
@@ -302,7 +316,7 @@ export default function HistoryPage() {
                     decoding="async"
                     className="w-full h-full object-cover"
                   />
-                  <div className="absolute top-2.5 right-2.5 px-2.5 py-1 rounded-full bg-surface/90 backdrop-blur-md text-[10px] text-ink-soft">
+                  <div className="absolute top-2.5 right-2.5 px-2.5 py-1 rounded-full bg-surface/90 backdrop-blur-md text-[11px] text-ink-soft">
                     {formatRelativeTime(trip.createdAt)}
                   </div>
                 </div>
@@ -335,30 +349,17 @@ export default function HistoryPage() {
                   <div className="flex items-start gap-2 text-right">
                     <div>
                       <span className="text-lg font-black text-ink">{formatCurrency(trip.totalCost)}</span>
-                      <span className="text-[10px] text-muted block">{trip.fuelUsedLiters.toFixed(2)} L fuel</span>
+                      <span className="text-[11px] text-muted block">{trip.fuelUsedLiters.toFixed(2)} L fuel</span>
                     </div>
-{trip.creatorUid === currentUserId && (
+                    {trip.creatorUid === currentUserId && (
                     <button
                       type="button"
                       onClick={() => openEdit(trip)}
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line bg-surface text-muted transition-colors hover:border-line-strong hover:text-ink"
+                      className={cn(BTN.secondary, 'h-11 w-11 text-muted hover:text-ink')}
                       aria-label={`Edit trip ${trip.name || `for ${trip.distanceKm} km`}`}
                       title="Edit trip"
                     >
-                      <svg
-                        className="h-4 w-4"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        aria-hidden="true"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          d="M16.862 3.487a2.1 2.1 0 013.651 1.434c0 .557-.221 1.091-.614 1.485L8.7 17.605l-4.2.9.9-4.2L16.862 3.487zM15.75 4.5l3.75 3.75"
-                        />
-                      </svg>
+                      <PencilIcon size={18} />
                     </button>
                     )}
                   </div>
@@ -366,22 +367,22 @@ export default function HistoryPage() {
 
                 <div className="grid grid-cols-3 gap-2 bg-surface-soft p-2.5 rounded-xl border border-line text-center text-xs">
                   <div>
-                    <span className="text-[10px] text-muted block">Mileage</span>
+                    <span className="text-[11px] text-muted block">Mileage</span>
                     <span className="font-semibold text-ink">{trip.avgMileageKmpl} km/L</span>
                   </div>
                   <div>
-                    <span className="text-[10px] text-muted block">Fuel Rate</span>
+                    <span className="text-[11px] text-muted block">Fuel Rate</span>
                     <span className="font-semibold text-ink">₹{trip.fuelPricePerLiter}/L</span>
                   </div>
                   <div>
-                    <span className="text-[10px] text-muted block">Split Mode</span>
+                    <span className="text-[11px] text-muted block">Split Mode</span>
                     <span className="font-semibold text-ink capitalize">{trip.splitMode}</span>
                   </div>
                 </div>
 
                 {trip.participants && trip.participants.length > 0 && (
                   <div className="space-y-1.5 pt-1">
-                    <span className="text-[10px] font-semibold text-muted uppercase tracking-wider block">
+                    <span className="text-[11px] font-semibold text-muted uppercase tracking-wider block">
                       Riders ({trip.participants.length})
                     </span>
                     <div className="flex flex-wrap gap-1.5">
@@ -500,134 +501,118 @@ export default function HistoryPage() {
                 </span>
               </div>
 
-              <button
-                type="button"
-                role="switch"
-                aria-checked={includeCreatorDraft}
-                onClick={() => setIncludeCreatorDraft((current) => !current)}
-                className="flex w-full items-center justify-between rounded-xl border border-line bg-surface px-3 py-2.5"
-              >
-                <span className="text-xs font-medium text-ink">Include me</span>
-                <span
-                  className={includeCreatorDraft
-                    ? 'h-5 w-9 rounded-full bg-primary p-0.5'
-                    : 'h-5 w-9 rounded-full bg-line-strong p-0.5'}
-                >
-                  <span
-                    className={includeCreatorDraft
-                      ? 'block h-4 w-4 translate-x-4 rounded-full bg-surface'
-                      : 'block h-4 w-4 rounded-full bg-surface'}
-                  />
-                </span>
-              </button>
+              <PersonToggle
+                name="You"
+                photo={user?.image}
+                selected={includeCreatorDraft}
+                onToggle={() => setIncludeCreatorDraft((current) => !current)}
+              />
 
+              {friends.length > 0 && (
+                <p className="pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted">Friends</p>
+              )}
               {friends.map((friend) => {
-                const friendUid =
-                  friend.fromUid === currentUserId ? friend.toUid : friend.fromUid;
-                const friendName =
-                  friend.fromUid === currentUserId ? friend.toName : friend.fromName;
+                const isFrom = friend.fromUid === currentUserId;
+                const friendUid = isFrom ? friend.toUid : friend.fromUid;
                 if (!friendUid) return null;
                 const key = `friend:${friendUid}`;
-                const selected = selectedParticipantIds.includes(key);
                 return (
-                  <button
-                    type="button"
+                  <PersonToggle
                     key={friend.id}
-                    onClick={() => toggleParticipant(key)}
-                    aria-pressed={selected}
-                    className={selected
-                      ? 'flex w-full items-center justify-between rounded-xl border border-line-strong bg-surface-soft px-3 py-2.5'
-                      : 'flex w-full items-center justify-between rounded-xl border border-line bg-surface px-3 py-2.5'}
-                  >
-                    <span className="text-xs font-medium text-ink">{friendName}</span>
-                    <span className="text-xs text-muted">{selected ? 'Added' : 'Add'}</span>
-                  </button>
+                    name={(isFrom ? friend.toName : friend.fromName) || 'Friend'}
+                    subtitle={isFrom ? friend.toEmail : friend.fromEmail}
+                    photo={isFrom ? friend.toPhoto : friend.fromPhoto}
+                    verified
+                    selected={selectedParticipantIds.includes(key)}
+                    onToggle={() => toggleParticipant(key)}
+                  />
                 );
               })}
 
-              {guestContacts.map((guest) => {
+              <p className="pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted">
+                Guests{availableGuests.length > 0 ? ` (${availableGuests.length})` : ''}
+              </p>
+              {availableGuests.length === 0 && (
+                <p className="text-[11px] text-muted">No guests yet. Add one below.</p>
+              )}
+              {availableGuests.map((guest) => {
                 const key = `guest:${guest.id}`;
-                const selected = selectedParticipantIds.includes(key);
                 return (
-                  <button
-                    type="button"
+                  <PersonToggle
                     key={guest.id}
-                    onClick={() => toggleParticipant(key)}
-                    aria-pressed={selected}
-                    className={selected
-                      ? 'flex w-full items-center justify-between rounded-xl border border-line-strong bg-surface-soft px-3 py-2.5'
-                      : 'flex w-full items-center justify-between rounded-xl border border-line bg-surface px-3 py-2.5'}
-                  >
-                    <span className="text-xs font-medium text-ink">{guest.name}</span>
-                    <span className="text-xs text-muted">{selected ? 'Added' : 'Add'}</span>
-                  </button>
+                    name={guest.name}
+                    subtitle={guestSubtitle(guest)}
+                    verified={Boolean(guest.linkedUid)}
+                    selected={selectedParticipantIds.includes(key)}
+                    onToggle={() => toggleParticipant(key)}
+                  />
                 );
               })}
 
-              <div className="flex gap-2">
-                <input
-                  value={quickGuestName}
-                  onChange={(event) => setQuickGuestName(event.target.value)}
-                  maxLength={80}
-                  placeholder="Add a guest"
-                  className="min-w-0 flex-1 rounded-xl border border-line bg-canvas px-3 py-2.5 text-xs text-ink outline-none focus:border-line-strong"
-                />
-                <button
-                  type="button"
-                  onClick={addQuickGuest}
-                  disabled={!quickGuestName.trim() || addingGuest}
-                  className="rounded-xl border border-line px-3 py-2.5 text-xs font-semibold text-primary disabled:opacity-50"
-                >
-                  {addingGuest ? 'Adding…' : 'Add'}
-                </button>
-              </div>
+              <QuickAddGuest
+                value={quickGuestName}
+                onChange={setQuickGuestName}
+                onAdd={addQuickGuest}
+                adding={addingGuest}
+              />
             </div>
 
-            <div className="mt-5 flex items-center justify-between gap-3">
+            <div className="mt-5 border-t border-line pt-4">
               {confirmDeleteTrip ? (
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setConfirmDeleteTrip(false)}
-                    disabled={deletingTrip}
-                    className="px-2.5 py-2 text-xs font-semibold text-muted"
-                  >
-                    Keep
-                  </button>
-                  <button
-                    type="button"
-                    onClick={deleteTrip}
-                    disabled={deletingTrip}
-                    className="rounded-xl border border-danger-line bg-danger px-3 py-2 text-xs font-semibold text-danger disabled:opacity-50"
-                  >
-                    {deletingTrip ? 'Deleting…' : 'Delete now'}
-                  </button>
+                <div className="space-y-2.5 rounded-2xl border border-danger-line bg-danger-soft p-3">
+                  <p className="text-xs font-medium text-ink">
+                    Delete this trip? Everyone&apos;s balance is adjusted to remove it.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteTrip(false)}
+                      disabled={deletingTrip}
+                      className={cn(BTN.secondary, BTN_SIZE.md, 'w-full')}
+                    >
+                      Keep trip
+                    </button>
+                    <button
+                      type="button"
+                      onClick={deleteTrip}
+                      disabled={deletingTrip}
+                      className={cn(BTN.danger, BTN_SIZE.md, 'w-full')}
+                    >
+                      {deletingTrip ? 'Deleting…' : 'Delete trip'}
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <button
                   type="button"
                   onClick={() => setConfirmDeleteTrip(true)}
-                  className="px-2.5 py-2 text-xs font-semibold text-danger hover:text-danger"
+                  disabled={savingEdit}
+                  className="inline-flex h-11 items-center gap-1.5 text-sm font-semibold text-danger hover:underline disabled:opacity-50"
                 >
+                  <TrashIcon size={16} />
                   Delete trip
                 </button>
               )}
-              <div className="flex gap-3">
-              <button
-                type="button"
-                onClick={closeEdit}
-                disabled={savingEdit}
-                className="px-3 py-2.5 text-xs font-semibold text-muted hover:text-ink"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={savingEdit}
-                className="rounded-xl bg-primary px-4 py-2.5 text-xs font-semibold text-on-primary hover:bg-primary-hover disabled:opacity-50"
-              >
-                {savingEdit ? 'Saving…' : 'Save changes'}
-              </button>
+            </div>
+
+            <div className="sticky bottom-0 -mx-5 -mb-5 mt-5 border-t border-line bg-surface px-5 py-3">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={closeEdit}
+                  disabled={savingEdit}
+                  className={cn(BTN.secondary, BTN_SIZE.md, 'w-full')}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEdit || deletingTrip || confirmDeleteTrip}
+                  className={cn(BTN.primary, BTN_SIZE.md, 'w-full')}
+                >
+                  <CheckIcon size={16} />
+                  {savingEdit ? 'Saving…' : 'Save'}
+                </button>
               </div>
             </div>
           </form>

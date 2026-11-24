@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { ChevronRightIcon, PencilIcon } from '@/components/icons';
 
 interface CameraCaptureProps {
   /** Called when the user confirms the photo they picked. */
@@ -118,13 +119,27 @@ export default function CameraCapture({
           </button>
 
           {onManualEntry && (
-            <button
-              type="button"
-              onClick={onManualEntry}
-              className="w-full py-2 text-center text-sm font-medium text-primary hover:underline"
-            >
-              Enter trip details manually
-            </button>
+            <>
+              <div className="flex items-center gap-3 px-2" aria-hidden="true">
+                <span className="h-px flex-1 bg-line" />
+                <span className="text-[11px] font-medium uppercase tracking-wider text-muted">or</span>
+                <span className="h-px flex-1 bg-line" />
+              </div>
+              <button
+                type="button"
+                onClick={onManualEntry}
+                className="flex w-full items-center gap-3 rounded-2xl border border-line bg-surface p-4 text-left transition-colors hover:bg-surface-soft active:scale-[0.99]"
+              >
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary">
+                  <PencilIcon size={20} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-semibold text-ink">Enter manually</span>
+                  <span className="block text-xs text-muted">Type the distance and mileage yourself</span>
+                </span>
+                <ChevronRightIcon size={18} className="shrink-0 text-muted" />
+              </button>
+            </>
           )}
         </div>
       )}

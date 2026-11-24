@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import {
-  createDocument,
   deleteDocument,
   getDocument,
   queryDocuments,
@@ -10,14 +9,13 @@ import {
   equalsIgnoreCase,
 } from '@/lib/db';
 import {
-  getGuestUid,
+  createGuestContact,
   linkGuestContact,
   renameGuestContact,
 } from '@/lib/guest-linking';
 import type { GuestContact, Trip, TripParticipant, UserProfile } from '@/types';
 import { splitEqually } from '@/lib/money';
 import { adjustBalance, getBalanceKey } from '@/lib/ledger';
-import { generateId } from '@/lib/utils';
 
 async function getOwnerUid() {
   const session = await getServerSession(authOptions);
@@ -54,40 +52,11 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json() as { name?: unknown };
-    const name = typeof body.name === 'string' ? body.name.trim().replace(/\s+/g, ' ') : '';
-    if (!name || name.length > 80) {
-      return NextResponse.json(
-        { success: false, error: 'Enter a guest name up to 80 characters.' },
-        { status: 400 }
-      );
+    const result = await createGuestContact(ownerUid, typeof body.name === 'string' ? body.name : '');
+    if (!result.ok) {
+      return NextResponse.json({ success: false, error: result.error }, { status: result.status });
     }
-
-    const existingGuests = await queryDocuments<GuestContact>(
-      'guests',
-      { ownerUid }
-    );
-    if (existingGuests.some((guest) => guest.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
-      return NextResponse.json(
-        { success: false, error: 'A guest with that name already exists.' },
-        { status: 409 }
-      );
-    }
-
-    const id = generateId();
-    const now = new Date().toISOString();
-    const guest: GuestContact = {
-      id,
-      ownerUid,
-      guestUid: getGuestUid(ownerUid, id),
-      name,
-      email: null,
-      linkedUid: null,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    const saved = await createDocument('guests', guest);
-    return NextResponse.json({ success: true, data: saved }, { status: 201 });
+    return NextResponse.json({ success: true, data: result.guest }, { status: 201 });
   } catch (error: unknown) {
     console.error('Guests POST error:', error);
     return NextResponse.json(

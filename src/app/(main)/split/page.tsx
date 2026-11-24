@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useId } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { formatCurrency, cn } from '@/lib/utils';
@@ -8,7 +8,9 @@ import type { Friendship, GuestContact, Trip, TripParticipant } from '@/types';
 import { invalidate, RESOURCES, setCachedData, useCachedData } from '@/lib/data-cache';
 import { cleanTripName, collectTripTags } from '@/lib/trip-labels';
 import TripLabelsFields from '@/components/TripLabelsFields';
-import { CheckIcon } from '@/components/icons';
+import PersonToggle from '@/components/PersonToggle';
+import QuickAddGuest from '@/components/QuickAddGuest';
+import { guestSubtitle } from '@/lib/people';
 
 interface VerifiedTripData {
   distanceKm: number;
@@ -29,7 +31,6 @@ function isVerifiedTripData(value: unknown): value is VerifiedTripData {
 export default function SplitPage() {
   const router = useRouter();
   const { user } = useAuth();
-  const guestNameInputId = useId();
 
   const [verifiedData, setVerifiedData] = useState<VerifiedTripData | null>(null);
   const friendsResource = useCachedData<{ friends: Friendship[] }>(RESOURCES.friends);
@@ -46,6 +47,7 @@ export default function SplitPage() {
   const tagSuggestions = collectTripTags(pastTrips ?? []);
   const [selectedGuests, setSelectedGuests] = useState<string[]>([]);
   const [guestName, setGuestName] = useState('');
+  const [addingGuest, setAddingGuest] = useState(false);
   const [includeMe, setIncludeMe] = useState(true);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -113,8 +115,7 @@ export default function SplitPage() {
     return (baseCents + (participantIndex >= 0 && participantIndex < remainingCents ? 1 : 0)) / 100;
   };
 
-  const handleAddGuest = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const handleAddGuest = async () => {
     const name = guestName.trim().replace(/\s+/g, ' ');
     if (!name) return;
     if (guestContacts.some((guest) => guest.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
@@ -122,6 +123,7 @@ export default function SplitPage() {
       return;
     }
 
+    setAddingGuest(true);
     try {
       const res = await fetch('/api/guests', {
         method: 'POST',
@@ -139,6 +141,8 @@ export default function SplitPage() {
       setErrorMsg(null);
     } catch (error: unknown) {
       setErrorMsg(error instanceof Error ? error.message : 'Could not add guest.');
+    } finally {
+      setAddingGuest(false);
     }
   };
 
@@ -310,198 +314,74 @@ export default function SplitPage() {
         </span>
       </div>
 
-      {/* Friends checklist */}
-      <div className="space-y-3">
+      {/* People in this split */}
+      <section className="space-y-3">
         <div className="flex items-center justify-between">
-          <label className="text-xs font-semibold text-muted uppercase tracking-wider">
-            Select Riders / Friends
-          </label>
+          <h2 className="text-xs font-semibold text-muted uppercase tracking-wider">People in this split</h2>
           <button
             type="button"
             onClick={() => router.push('/friends')}
-            className="text-xs text-primary hover:text-primary-hover font-semibold"
+            className="text-xs font-semibold text-primary hover:text-primary-hover"
           >
-            + Invite Friends
+            Manage people
           </button>
         </div>
 
-        {friends.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-line p-6 text-center space-y-2">
-            <p className="text-xs text-muted">
-              No friends connected yet. You can invite friends via email or save this as a solo trip.
-            </p>
-            <button
-              type="button"
-              onClick={() => router.push('/friends')}
-              className="text-xs px-3.5 py-1.5 rounded-lg bg-canvas text-primary border border-line font-semibold"
-            >
-              Add Friend by Email →
-            </button>
-          </div>
-        ) : (
-          <div className="space-y-2.5">
-            {friends.map((friend) => {
-              const fUid =
-                friend.fromUid === currentUserId ? friend.toUid : friend.fromUid;
-              const fName =
-                friend.fromUid === currentUserId ? friend.toName : friend.fromName;
-              const fPhoto =
-                friend.fromUid === currentUserId ? friend.toPhoto : friend.fromPhoto;
-              const isSelected = fUid ? selectedFriends.includes(fUid) : false;
-
-              if (!fUid) return null;
-
-              return (
-                <div
-                  key={friend.id}
-                  className={cn(
-                    'p-3.5 rounded-2xl border transition-all duration-150',
-                    isSelected
-                      ? 'bg-surface-soft border-line-strong'
-                      : 'bg-surface border-line hover:border-line'
-                  )}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <button
-                      type="button"
-                      onClick={() => handleToggleFriend(fUid)}
-                      className="flex items-center gap-3 flex-1 text-left"
-                      aria-pressed={isSelected}
-                    >
-                      <div
-                        className={cn(
-                          'w-6 h-6 rounded-lg border flex items-center justify-center transition-colors',
-                          isSelected
-                            ? 'bg-primary border-primary text-on-primary'
-                            : 'border-line bg-surface-soft'
-                        )}
-                      >
-                        {isSelected && (
-                          <svg className="w-3.5 h-3.5 stroke-[3]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-                          </svg>
-                        )}
-                      </div>
-
-                      {fPhoto ? (
-                        <img src={fPhoto} alt="" className="w-8 h-8 rounded-full border border-line" />
-                      ) : (
-                        <div className="w-8 h-8 rounded-full bg-surface-soft flex items-center justify-center text-xs font-bold text-ink-soft">
-                          {fName?.[0] || 'F'}
-                        </div>
-                      )}
-
-                      <div>
-                        <p className="text-sm font-semibold text-ink">{fName}</p>
-                        <p className="text-[11px] text-muted">{friend.toEmail}</p>
-                      </div>
-                    </button>
-
-                    {isSelected && (
-                      <div className="text-right">
-                        <span className="text-sm font-bold text-primary">
-                          {formatCurrency(getParticipantShare(fUid))}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                </div>
-              );
-            })}
-          </div>
+        {friends.length > 0 && (
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">Friends</p>
         )}
-      </div>
+        {friends.map((friend) => {
+          const isFrom = friend.fromUid === currentUserId;
+          const fUid = isFrom ? friend.toUid : friend.fromUid;
+          if (!fUid) return null;
+          const isSelected = selectedFriends.includes(fUid);
+          return (
+            <PersonToggle
+              key={friend.id}
+              name={(isFrom ? friend.toName : friend.fromName) || 'Friend'}
+              subtitle={isFrom ? friend.toEmail : friend.fromEmail}
+              photo={isFrom ? friend.toPhoto : friend.fromPhoto}
+              verified
+              selected={isSelected}
+              onToggle={() => handleToggleFriend(fUid)}
+              trailing={isSelected && (
+                <span className="text-sm font-bold text-primary">{formatCurrency(getParticipantShare(fUid))}</span>
+              )}
+            />
+          );
+        })}
 
-      <section className="space-y-3">
-        <div>
-          <h2 className="text-xs font-semibold text-muted uppercase tracking-wider">
-            Add someone without the app
-          </h2>
-          <p className="text-[11px] text-muted mt-1">
-            We’ll include their share and track it by name for manual settlement.
-          </p>
-        </div>
-        <form onSubmit={handleAddGuest} className="flex gap-2">
-          <label htmlFor={guestNameInputId} className="sr-only">Guest name</label>
-          <input
-            id={guestNameInputId}
-            value={guestName}
-            onChange={(event) => setGuestName(event.target.value)}
-            placeholder="Enter a name"
-            maxLength={80}
-            className="min-w-0 flex-1 rounded-xl border border-line bg-surface px-3.5 py-3 text-sm text-ink placeholder:text-muted focus:border-line-strong focus:outline-none"
-          />
-          <button
-            type="submit"
-            disabled={!guestName.trim()}
-            className="rounded-xl border border-line bg-canvas px-4 py-3 text-xs font-semibold text-primary transition-colors hover:bg-surface-soft disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            Add guest
-          </button>
-        </form>
         {selectableGuestContacts.length > 0 && (
-          <div className="space-y-2">
-            {selectableGuestContacts.map((guest) => {
-              const isSelected = selectedGuests.includes(guest.id);
-              return (
-                <div
-                  key={guest.id}
-                  className={cn(
-                    'flex items-center justify-between rounded-2xl border p-3.5 transition-colors',
-                    isSelected
-                      ? 'border-line-strong bg-surface-soft'
-                      : 'border-line bg-surface'
-                  )}
-                >
-                  <button
-                    type="button"
-                    onClick={() => handleToggleGuest(guest.id)}
-                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                    aria-pressed={isSelected}
-                  >
-                    <span
-                      className={cn(
-                        'flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border',
-                        isSelected
-                          ? 'border-primary bg-primary text-on-primary'
-                          : 'border-line bg-surface-soft'
-                      )}
-                    >
-                      {isSelected && <CheckIcon size={14} strokeWidth={2.4} />}
-                    </span>
-                    <span className="min-w-0">
-                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-soft text-xs font-bold text-ink-soft">
-                        {guest.name[0]?.toUpperCase()}
-                      </span>
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-semibold text-ink">{guest.name}</span>
-                      <span className="block truncate text-[11px] text-muted">
-                        {guest.linkedUid ? 'Account linked' : guest.email || 'Guest · no account needed'}
-                      </span>
-                    </span>
-                  </button>
-                  <div className="ml-3 flex shrink-0 items-center gap-3">
-                    {isSelected && (
-                      <span className="text-sm font-bold text-primary">
-                        {formatCurrency(getParticipantShare(`guest:${guest.id}`))}
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => router.push('/friends')}
-                      aria-label={`Edit ${guest.name}`}
-                      className="rounded-lg px-2 py-1 text-xs text-muted transition-colors hover:bg-surface hover:text-ink"
-                    >
-                      Edit
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <p className="pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted">
+            Guests ({selectableGuestContacts.length})
+          </p>
         )}
+        {selectableGuestContacts.map((guest) => {
+          const isSelected = selectedGuests.includes(guest.id);
+          return (
+            <PersonToggle
+              key={guest.id}
+              name={guest.name}
+              subtitle={guestSubtitle(guest)}
+              verified={Boolean(guest.linkedUid)}
+              selected={isSelected}
+              onToggle={() => handleToggleGuest(guest.id)}
+              trailing={isSelected && (
+                <span className="text-sm font-bold text-primary">
+                  {formatCurrency(getParticipantShare(`guest:${guest.id}`))}
+                </span>
+              )}
+            />
+          );
+        })}
+
+        {friends.length === 0 && selectableGuestContacts.length === 0 && (
+          <p className="rounded-2xl border border-dashed border-line p-4 text-center text-xs text-muted">
+            Just you so far. Add a guest below, or add friends from the Friends tab.
+          </p>
+        )}
+
+        <QuickAddGuest value={guestName} onChange={setGuestName} onAdd={handleAddGuest} adding={addingGuest} />
       </section>
 
       {/* Optional trip name and tags */}

@@ -1,11 +1,18 @@
 'use client';
 
-import { useState, useId } from 'react';
+import { useId, useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import type { Friendship, GuestContact } from '@/types';
-import { AlertCircleIcon, CheckCircleIcon } from '@/components/icons';
+import {
+  AlertCircleIcon,
+  CheckCircleIcon,
+  ChevronDownIcon,
+  UserPlusIcon,
+  VerifiedIcon,
+} from '@/components/icons';
 import { invalidate, RESOURCES, useCachedData } from '@/lib/data-cache';
+import { BTN, BTN_SIZE } from '@/lib/ui';
 
 interface FriendLists {
   friends: Friendship[];
@@ -13,16 +20,31 @@ interface FriendLists {
   pendingReceived: Friendship[];
 }
 
+const INPUT =
+  'h-11 w-full rounded-xl border border-line bg-surface px-3.5 text-sm text-ink outline-none focus:border-primary disabled:opacity-60';
+
 export default function FriendsPage() {
   const { user } = useAuth();
-  const emailInputId = useId();
+  const nameId = useId();
+  const emailId = useId();
   const friendsResource = useCachedData<FriendLists>(RESOURCES.friends);
   const guestsResource = useCachedData<GuestContact[]>(RESOURCES.guests);
   const friends = friendsResource.data?.friends ?? [];
   const pendingSent = friendsResource.data?.pendingSent ?? [];
   const pendingReceived = friendsResource.data?.pendingReceived ?? [];
-  const guestContacts = guestsResource.data ?? [];
   const loading = friendsResource.loading;
+  const currentUserId = user?.uid || '';
+
+  // A guest whose account is already a friend is shown once, as the friend.
+  const friendUids = new Set(
+    friends
+      .map((friend) => (friend.fromUid === currentUserId ? friend.toUid : friend.fromUid))
+      .filter((uid): uid is string => Boolean(uid))
+  );
+  const guests = (guestsResource.data ?? []).filter(
+    (guest) => !guest.linkedUid || !friendUids.has(guest.linkedUid)
+  );
+
   const setFriends = (update: (current: Friendship[]) => Friendship[]) =>
     friendsResource.mutate((current) => ({
       friends: update(current?.friends ?? []),
@@ -32,58 +54,79 @@ export default function FriendsPage() {
   const setGuestContacts = (update: (current: GuestContact[]) => GuestContact[]) =>
     guestsResource.mutate((current) => update(current ?? []));
 
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [editingGuestId, setEditingGuestId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // Add person
+  const [showAdd, setShowAdd] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
+
+  // One open row at a time, keyed `friend:<id>` or `guest:<id>`.
+  const [openRow, setOpenRow] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [rowError, setRowError] = useState<string | null>(null);
   const [guestNameDraft, setGuestNameDraft] = useState('');
   const [guestEmailDraft, setGuestEmailDraft] = useState('');
-  const [savingGuest, setSavingGuest] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [confirmUnfriendId, setConfirmUnfriendId] = useState<string | null>(null);
-  const [deletingFriendId, setDeletingFriendId] = useState<string | null>(null);
-  const [confirmDeleteGuestId, setConfirmDeleteGuestId] = useState<string | null>(null);
-  const [deletingGuestId, setDeletingGuestId] = useState<string | null>(null);
-  const [bannerNotice, setBannerNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  const fetchFriendsList = () => {
-    invalidate([RESOURCES.friends, RESOURCES.guests]);
+  const toggleRow = (key: string, guest?: GuestContact) => {
+    setConfirmingDelete(false);
+    setRowError(null);
+    if (openRow === key) {
+      setOpenRow(null);
+      return;
+    }
+    setOpenRow(key);
+    if (guest) {
+      setGuestNameDraft(guest.name);
+      setGuestEmailDraft(guest.email || '');
+    }
   };
 
-  const handleSendInvite = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inviteEmail.trim()) return;
+  const closeAdd = () => {
+    setShowAdd(false);
+    setNewName('');
+    setNewEmail('');
+    setAddError(null);
+  };
 
-    setSending(true);
-    setBannerNotice(null);
-
+  const handleAddPerson = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = newName.trim().replace(/\s+/g, ' ');
+    if (!name) return;
+    setAdding(true);
+    setAddError(null);
+    setNotice(null);
     try {
-      const res = await fetch('/api/friends', {
+      const res = await fetch('/api/people', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: inviteEmail.trim() }),
+        body: JSON.stringify({ name, email: newEmail.trim() }),
       });
       const data = await res.json();
-
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to send invite');
+        throw new Error(data.error || 'Could not add this person.');
       }
-
-      setBannerNotice({
-        type: 'success',
-        text: data.message || 'Invite dispatched! Added to Pending Sent.',
-      });
-      setInviteEmail('');
-      fetchFriendsList();
-    } catch (err: unknown) {
-      setBannerNotice({
-        type: 'error',
-        text: err instanceof Error ? err.message : 'Could not send invite.',
-      });
+      if (data.kind === 'guest') {
+        const guest = data.data as GuestContact;
+        setGuestContacts((current) => [guest, ...current]);
+      } else {
+        invalidate([RESOURCES.friends]);
+      }
+      closeAdd();
+      setNotice({ type: 'success', text: data.message });
+    } catch (error: unknown) {
+      // Keep the form open so nothing typed is lost.
+      setAddError(error instanceof Error ? error.message : 'Could not add this person.');
     } finally {
-      setSending(false);
+      setAdding(false);
     }
   };
 
   const handleRespondInvite = async (friendshipId: string, action: 'accept' | 'decline') => {
+    setNotice(null);
     try {
       const res = await fetch('/api/friends', {
         method: 'PATCH',
@@ -91,21 +134,17 @@ export default function FriendsPage() {
         body: JSON.stringify({ friendshipId, action }),
       });
       const data = await res.json();
-      if (data.success) {
-        setBannerNotice({
-          type: 'success',
-          text: action === 'accept' ? 'Friend request accepted!' : 'Invite declined.',
-        });
-        fetchFriendsList();
-      }
-    } catch (err) {
-      console.error('Error responding to invite:', err);
+      if (!res.ok || !data.success) throw new Error(data.error || 'Could not answer this request.');
+      setNotice({ type: 'success', text: action === 'accept' ? 'You’re now friends.' : 'Request declined.' });
+      invalidate([RESOURCES.friends, RESOURCES.guests]);
+    } catch (error: unknown) {
+      setNotice({ type: 'error', text: error instanceof Error ? error.message : 'Could not answer this request.' });
     }
   };
 
   const handleUnfriend = async (friendshipId: string) => {
-    setDeletingFriendId(friendshipId);
-    setBannerNotice(null);
+    setBusy(true);
+    setRowError(null);
     try {
       const res = await fetch('/api/friends', {
         method: 'DELETE',
@@ -113,26 +152,22 @@ export default function FriendsPage() {
         body: JSON.stringify({ friendshipId }),
       });
       const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Could not remove friend.');
-      }
+      if (!res.ok || !data.success) throw new Error(data.error || 'Could not remove friend.');
       setFriends((current) => current.filter((friend) => friend.id !== friendshipId));
       invalidate([RESOURCES.friends, RESOURCES.balances]);
-      setConfirmUnfriendId(null);
-      setBannerNotice({ type: 'success', text: 'Friend removed.' });
+      setOpenRow(null);
+      setNotice({ type: 'success', text: 'Friend removed.' });
     } catch (error: unknown) {
-      setBannerNotice({
-        type: 'error',
-        text: error instanceof Error ? error.message : 'Could not remove friend.',
-      });
+      setRowError(error instanceof Error ? error.message : 'Could not remove friend.');
     } finally {
-      setDeletingFriendId(null);
+      setBusy(false);
+      setConfirmingDelete(false);
     }
   };
 
   const handleDeleteGuest = async (guestId: string) => {
-    setDeletingGuestId(guestId);
-    setBannerNotice(null);
+    setBusy(true);
+    setRowError(null);
     try {
       const res = await fetch('/api/guests', {
         method: 'DELETE',
@@ -140,26 +175,23 @@ export default function FriendsPage() {
         body: JSON.stringify({ guestId }),
       });
       const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Could not delete guest.');
-      }
+      if (!res.ok || !data.success) throw new Error(data.error || 'Could not delete guest.');
       setGuestContacts((current) => current.filter((guest) => guest.id !== guestId));
       invalidate([RESOURCES.trips, RESOURCES.balances]);
-      setConfirmDeleteGuestId(null);
-      setBannerNotice({ type: 'success', text: 'Guest deleted and removed from trip splits.' });
+      setOpenRow(null);
+      setNotice({ type: 'success', text: 'Guest deleted and removed from their trips.' });
     } catch (error: unknown) {
-      setBannerNotice({
-        type: 'error',
-        text: error instanceof Error ? error.message : 'Could not delete guest.',
-      });
+      setRowError(error instanceof Error ? error.message : 'Could not delete guest.');
     } finally {
-      setDeletingGuestId(null);
+      setBusy(false);
+      setConfirmingDelete(false);
     }
   };
 
-  const handleUpdateGuest = async (guest: GuestContact) => {
-    setSavingGuest(true);
-    setBannerNotice(null);
+  const handleSaveGuest = async (guest: GuestContact) => {
+    setBusy(true);
+    setRowError(null);
+    setNotice(null);
     try {
       const res = await fetch('/api/guests', {
         method: 'PATCH',
@@ -171,81 +203,150 @@ export default function FriendsPage() {
         }),
       });
       const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Could not update guest.');
-      }
-
+      if (!res.ok || !data.success) throw new Error(data.error || 'Could not save guest.');
       const updated = data.data as GuestContact;
-      setGuestContacts((current) => current.map((item) => item.id === updated.id ? updated : item));
-      if (updated.linkedUid) invalidate([RESOURCES.trips, RESOURCES.balances, RESOURCES.friends]);
-      setEditingGuestId(null);
-      setBannerNotice({
+      setGuestContacts((current) => current.map((item) => (item.id === updated.id ? updated : item)));
+      const justLinked = Boolean(updated.linkedUid && !guest.linkedUid);
+      if (justLinked) invalidate([RESOURCES.trips, RESOURCES.balances, RESOURCES.friends]);
+      setOpenRow(null);
+      setNotice({
         type: 'success',
-        text: updated.linkedUid
-          ? `${updated.name}’s account is linked. Their trip history and balance were transferred.`
-          : updated.email
-            ? 'Guest saved. Their trips and balance will link when they create an account with this email.'
-            : 'Guest contact updated.',
+        text: justLinked
+          ? `${guest.name} already uses Paytrol as ${updated.name}. Their trips and balance moved to that account.`
+          : 'Guest saved.',
       });
     } catch (error: unknown) {
-      setBannerNotice({
-        type: 'error',
-        text: error instanceof Error ? error.message : 'Could not update guest.',
-      });
+      setRowError(error instanceof Error ? error.message : 'Could not save guest.');
     } finally {
-      setSavingGuest(false);
+      setBusy(false);
     }
   };
 
-  const currentUserId = user?.uid || '';
+  const deleteConfirm = (label: string, question: string, onConfirm: () => void) =>
+    confirmingDelete ? (
+      <div className="space-y-2.5 rounded-xl border border-danger-line bg-danger-soft p-3">
+        <p className="text-xs font-medium text-ink">{question}</p>
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => setConfirmingDelete(false)}
+            disabled={busy}
+            className={cn(BTN.secondary, BTN_SIZE.md, 'w-full')}
+          >
+            Cancel
+          </button>
+          <button type="button" onClick={onConfirm} disabled={busy} className={cn(BTN.danger, BTN_SIZE.md, 'w-full')}>
+            {busy ? 'Working…' : label}
+          </button>
+        </div>
+      </div>
+    ) : (
+      <button
+        type="button"
+        onClick={() => setConfirmingDelete(true)}
+        className={cn(BTN.dangerOutline, BTN_SIZE.md, 'w-full')}
+      >
+        {label}
+      </button>
+    );
+
+  const rowErrorText = rowError && (
+    <p role="alert" className="text-xs text-danger">
+      {rowError}
+    </p>
+  );
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-black text-ink">Friends</h1>
-        <p className="mt-1 text-xs text-muted">
-          Add friends by email to split fuel costs and track balances.
-        </p>
+      <header className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-black text-ink">Friends</h1>
+          <p className="mt-1 text-xs text-muted">People you split trips with.</p>
+        </div>
+        {!showAdd && (
+          <button
+            type="button"
+            onClick={() => {
+              setShowAdd(true);
+              setNotice(null);
+            }}
+            className={cn(BTN.primary, BTN_SIZE.md)}
+          >
+            <UserPlusIcon size={18} />
+            Add person
+          </button>
+        )}
       </header>
 
-      {bannerNotice && (
+      {notice && (
         <div
-          role="status"
+          role={notice.type === 'error' ? 'alert' : 'status'}
           className={cn(
             'flex items-start gap-2.5 rounded-2xl border p-3.5 text-xs',
-            bannerNotice.type === 'success'
+            notice.type === 'success'
               ? 'border-primary-line bg-primary-soft text-primary'
               : 'border-danger-line bg-danger-soft text-danger'
           )}
         >
-          {bannerNotice.type === 'success' ? <CheckCircleIcon size={18} /> : <AlertCircleIcon size={18} />}
-          <span>{bannerNotice.text}</span>
+          {notice.type === 'success' ? <CheckCircleIcon size={18} /> : <AlertCircleIcon size={18} />}
+          <span>{notice.text}</span>
         </div>
       )}
 
-      {/* Invite */}
-      <form onSubmit={handleSendInvite} className="space-y-2">
-        <label htmlFor={emailInputId} className="block text-xs font-semibold text-muted">
-          Invite a friend
-        </label>
-        <div className="flex gap-2">
-          <input
-            id={emailInputId}
-            type="email"
-            required
-            placeholder="friend@example.com"
-            value={inviteEmail}
-            onChange={(e) => setInviteEmail(e.target.value)}
-            className="min-w-0 flex-1 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-sm text-ink outline-none focus:border-primary"
-          />
-          <button type="submit" disabled={sending || !inviteEmail} className={BTN_PRIMARY}>
-            {sending ? 'Sending…' : 'Invite'}
-          </button>
-        </div>
-        <p className="px-1 text-[11px] text-muted">
-          They&apos;ll see it in Paytrol when they sign in with this email.
-        </p>
-      </form>
+      {showAdd && (
+        <form onSubmit={handleAddPerson} className="space-y-3 rounded-2xl border border-primary-line bg-surface p-4">
+          <h2 className="text-sm font-bold text-ink">Add person</h2>
+          <div className="space-y-1.5">
+            <label htmlFor={nameId} className="block text-xs font-medium text-muted">
+              Name
+            </label>
+            <input
+              id={nameId}
+              value={newName}
+              onChange={(event) => setNewName(event.target.value)}
+              maxLength={80}
+              required
+              autoFocus
+              placeholder="e.g. Rahul"
+              className={INPUT}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label htmlFor={emailId} className="block text-xs font-medium text-muted">
+              Email <span className="font-normal">(optional)</span>
+            </label>
+            <input
+              id={emailId}
+              type="email"
+              value={newEmail}
+              onChange={(event) => setNewEmail(event.target.value)}
+              placeholder="rahul@example.com"
+              className={INPUT}
+            />
+            <p className="text-[11px] text-muted">
+              If they use Paytrol, we send a friend request. If not, you can split with them now and their
+              trips move to their account when they sign up.
+            </p>
+          </div>
+          {addError && (
+            <p role="alert" className="text-xs text-danger">
+              {addError}
+            </p>
+          )}
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={closeAdd} className={cn(BTN.secondary, BTN_SIZE.md, 'w-full')}>
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={adding || !newName.trim()}
+              className={cn(BTN.primary, BTN_SIZE.md, 'w-full')}
+            >
+              {adding ? 'Adding…' : 'Add'}
+            </button>
+          </div>
+        </form>
+      )}
 
       {loading ? (
         <div className="space-y-2">
@@ -255,192 +356,172 @@ export default function FriendsPage() {
         </div>
       ) : (
         <>
-          {/* Requests for me: only shown when there are any */}
           {pendingReceived.length > 0 && (
             <Section title="Requests" count={pendingReceived.length}>
               {pendingReceived.map((f) => (
-                <Row
-                  key={f.id}
-                  name={f.fromName}
-                  subtitle={f.fromEmail}
-                  photo={f.fromPhoto}
-                  actions={
-                    <>
-                      <button type="button" onClick={() => handleRespondInvite(f.id, 'decline')} className={BTN_SECONDARY}>
-                        Decline
-                      </button>
-                      <button type="button" onClick={() => handleRespondInvite(f.id, 'accept')} className={BTN_PRIMARY}>
-                        Accept
-                      </button>
-                    </>
-                  }
-                />
+                <Card key={f.id}>
+                  <Person name={f.fromName} subtitle={f.fromEmail} photo={f.fromPhoto} verified />
+                  <div className="grid grid-cols-2 gap-2 px-3 pb-3">
+                    <button
+                      type="button"
+                      onClick={() => handleRespondInvite(f.id, 'decline')}
+                      className={cn(BTN.secondary, BTN_SIZE.md, 'w-full')}
+                    >
+                      Decline
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRespondInvite(f.id, 'accept')}
+                      className={cn(BTN.primary, BTN_SIZE.md, 'w-full')}
+                    >
+                      Accept
+                    </button>
+                  </div>
+                </Card>
               ))}
             </Section>
           )}
 
           <Section title="Friends" count={friends.length}>
             {friends.length === 0 ? (
-              <Empty>No friends yet. Invite someone above to get started.</Empty>
+              <Empty>No friends yet. Tap Add person and enter their email.</Empty>
             ) : (
               friends.map((f) => {
                 const isFrom = f.fromUid === currentUserId;
-                const fName = (isFrom ? f.toName : f.fromName) || 'Friend';
+                const name = (isFrom ? f.toName : f.fromName) || 'Friend';
+                const key = `friend:${f.id}`;
+                const open = openRow === key;
                 return (
-                  <Row
-                    key={f.id}
-                    name={fName}
-                    subtitle={isFrom ? f.toEmail : f.fromEmail}
-                    photo={isFrom ? f.toPhoto : f.fromPhoto}
-                    actions={
-                      confirmUnfriendId === f.id ? (
-                        <>
-                          <button type="button" onClick={() => setConfirmUnfriendId(null)} className={BTN_SECONDARY}>
-                            Cancel
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleUnfriend(f.id)}
-                            disabled={deletingFriendId === f.id}
-                            className={BTN_DANGER}
-                          >
-                            {deletingFriendId === f.id ? 'Removing…' : 'Remove'}
-                          </button>
-                        </>
-                      ) : (
-                        <button type="button" onClick={() => setConfirmUnfriendId(f.id)} className={BTN_SECONDARY}>
-                          Remove
-                        </button>
-                      )
-                    }
-                  />
+                  <Card key={f.id} open={open}>
+                    <Person
+                      name={name}
+                      verified
+                      subtitle={isFrom ? f.toEmail : f.fromEmail}
+                      photo={isFrom ? f.toPhoto : f.fromPhoto}
+                      onClick={() => toggleRow(key)}
+                      open={open}
+                    />
+                    {open && (
+                      <div className="space-y-2.5 border-t border-line p-3">
+                        {rowErrorText}
+                        {deleteConfirm('Remove friend', `Remove ${name} from your friends?`, () =>
+                          handleUnfriend(f.id)
+                        )}
+                      </div>
+                    )}
+                  </Card>
                 );
               })
             )}
           </Section>
 
-          {/* Invites I sent: only shown when there are any */}
           {pendingSent.length > 0 && (
-            <Section title="Invites sent" count={pendingSent.length}>
+            <Section title="Requests sent" count={pendingSent.length}>
               {pendingSent.map((f) => (
-                <Row
-                  key={f.id}
-                  name={f.toName || f.toEmail}
-                  subtitle={f.toEmail}
-                  photo={f.toPhoto}
-                  actions={<span className="rounded-full bg-warning-soft px-2.5 py-1 text-[11px] font-semibold text-warning">Waiting</span>}
-                />
+                <Card key={f.id}>
+                  <Person
+                    name={f.toName || f.toEmail}
+                    subtitle={f.toEmail}
+                    photo={f.toPhoto}
+                    trailing={<span className="rounded-full bg-surface-soft px-2.5 py-1 text-[11px] font-semibold text-muted">Waiting</span>}
+                  />
+                </Card>
               ))}
             </Section>
           )}
+
+          <Section title="Guests" count={guests.length} hint="Not on Paytrol yet. You track them by name.">
+            {guests.length === 0 ? (
+              <Empty>No guests yet. Add someone without an email, or whose email isn&apos;t on Paytrol.</Empty>
+            ) : (
+              guests.map((guest) => {
+                const key = `guest:${guest.id}`;
+                const open = openRow === key;
+                return (
+                  <Card key={guest.id} open={open}>
+                    <Person
+                      name={guest.name}
+                      verified={Boolean(guest.linkedUid)}
+                      subtitle={
+                        guest.linkedUid
+                          ? 'Has an account'
+                          : guest.email
+                            ? `Invited · ${guest.email}`
+                            : 'Guest'
+                      }
+                      onClick={() => toggleRow(key, guest)}
+                      open={open}
+                    />
+                    {open && (
+                      <form
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          handleSaveGuest(guest);
+                        }}
+                        className="space-y-3 border-t border-line p-3"
+                      >
+                        <label className="block space-y-1.5">
+                          <span className="block text-xs font-medium text-muted">Name</span>
+                          <input
+                            value={guestNameDraft}
+                            onChange={(event) => setGuestNameDraft(event.target.value)}
+                            maxLength={80}
+                            required
+                            className={INPUT}
+                          />
+                        </label>
+                        <label className="block space-y-1.5">
+                          <span className="block text-xs font-medium text-muted">
+                            Email <span className="font-normal">(optional)</span>
+                          </span>
+                          <input
+                            type="email"
+                            value={guestEmailDraft}
+                            onChange={(event) => setGuestEmailDraft(event.target.value)}
+                            disabled={Boolean(guest.linkedUid)}
+                            placeholder="name@example.com"
+                            className={INPUT}
+                          />
+                          <span className="block text-[11px] text-muted">
+                            {guest.linkedUid
+                              ? 'Linked to their account, so the email can’t change.'
+                              : 'When they sign up with this email, their trips move to their account.'}
+                          </span>
+                        </label>
+                        {rowErrorText}
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleRow(key)}
+                            className={cn(BTN.secondary, BTN_SIZE.md, 'w-full')}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="submit"
+                            disabled={busy || confirmingDelete}
+                            className={cn(BTN.primary, BTN_SIZE.md, 'w-full')}
+                          >
+                            {busy && !confirmingDelete ? 'Saving…' : 'Save'}
+                          </button>
+                        </div>
+                        {deleteConfirm(
+                          'Delete guest',
+                          `Delete ${guest.name}? They’re removed from your trips and their share is split among the others.`,
+                          () => handleDeleteGuest(guest.id)
+                        )}
+                      </form>
+                    )}
+                  </Card>
+                );
+              })
+            )}
+          </Section>
         </>
       )}
-
-      <Section
-        title="Guests"
-        count={guestContacts.length}
-        hint="Add an email later to link their trips and balance when they join Paytrol."
-      >
-        {guestContacts.length === 0 ? (
-          <Empty>Guests you add while splitting a trip will show up here.</Empty>
-        ) : (
-          guestContacts.map((guest) =>
-            editingGuestId === guest.id ? (
-              <form
-                key={guest.id}
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  handleUpdateGuest(guest);
-                }}
-                className="space-y-3 rounded-2xl border border-line bg-surface p-4"
-              >
-                <label className="block space-y-1.5">
-                  <span className="text-[11px] font-medium text-muted">Name</span>
-                  <input
-                    value={guestNameDraft}
-                    onChange={(event) => setGuestNameDraft(event.target.value)}
-                    maxLength={80}
-                    required
-                    className="w-full rounded-xl border border-line bg-surface px-3 py-2.5 text-sm text-ink outline-none focus:border-primary"
-                  />
-                </label>
-                <label className="block space-y-1.5">
-                  <span className="text-[11px] font-medium text-muted">Email (optional)</span>
-                  <input
-                    type="email"
-                    value={guestEmailDraft}
-                    onChange={(event) => setGuestEmailDraft(event.target.value)}
-                    disabled={Boolean(guest.linkedUid)}
-                    placeholder="friend@example.com"
-                    className="w-full rounded-xl border border-line bg-surface px-3 py-2.5 text-sm text-ink outline-none focus:border-primary disabled:opacity-60"
-                  />
-                </label>
-                {guest.linkedUid && (
-                  <p className="text-[11px] text-muted">A linked account&apos;s email can&apos;t be changed.</p>
-                )}
-                <div className="flex justify-end gap-2">
-                  <button type="button" onClick={() => setEditingGuestId(null)} className={BTN_SECONDARY}>
-                    Cancel
-                  </button>
-                  <button type="submit" disabled={savingGuest} className={BTN_PRIMARY}>
-                    {savingGuest ? 'Saving…' : 'Save'}
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <Row
-                key={guest.id}
-                name={guest.name}
-                subtitle={guest.linkedUid ? 'Account linked' : guest.email || 'No email added'}
-                actions={
-                  confirmDeleteGuestId === guest.id ? (
-                    <>
-                      <button type="button" onClick={() => setConfirmDeleteGuestId(null)} className={BTN_SECONDARY}>
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteGuest(guest.id)}
-                        disabled={deletingGuestId === guest.id}
-                        className={BTN_DANGER}
-                      >
-                        {deletingGuestId === guest.id ? 'Deleting…' : 'Delete'}
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setEditingGuestId(guest.id);
-                          setGuestNameDraft(guest.name);
-                          setGuestEmailDraft(guest.email || '');
-                        }}
-                        className={BTN_SECONDARY}
-                      >
-                        Edit
-                      </button>
-                      <button type="button" onClick={() => setConfirmDeleteGuestId(guest.id)} className={BTN_SECONDARY}>
-                        Delete
-                      </button>
-                    </>
-                  )
-                }
-              />
-            )
-          )
-        )}
-      </Section>
     </div>
   );
 }
-
-// One button style per role, used everywhere on this page.
-const BTN_BASE =
-  'inline-flex h-9 shrink-0 items-center justify-center rounded-xl px-3.5 text-xs font-semibold transition-colors disabled:opacity-50';
-const BTN_PRIMARY = `${BTN_BASE} bg-primary text-on-primary hover:bg-primary-hover`;
-const BTN_SECONDARY = `${BTN_BASE} border border-line bg-surface text-ink hover:bg-surface-soft`;
-const BTN_DANGER = `${BTN_BASE} bg-danger text-on-primary hover:bg-danger-hover`;
 
 function Section({
   title,
@@ -464,26 +545,40 @@ function Section({
             </span>
           ) : null}
         </h2>
-        {hint && <p className="mt-1 text-xs text-muted">{hint}</p>}
+        {hint && <p className="mt-0.5 text-xs text-muted">{hint}</p>}
       </div>
       <div className="space-y-2">{children}</div>
     </section>
   );
 }
 
-function Row({
+function Card({ open, children }: { open?: boolean; children: React.ReactNode }) {
+  return (
+    <div className={cn('overflow-hidden rounded-2xl border bg-surface', open ? 'border-line-strong' : 'border-line')}>
+      {children}
+    </div>
+  );
+}
+
+function Person({
   name,
   subtitle,
   photo,
-  actions,
+  verified,
+  onClick,
+  open,
+  trailing,
 }: {
   name: string;
   subtitle?: string | null;
   photo?: string | null;
-  actions?: React.ReactNode;
+  verified?: boolean;
+  onClick?: () => void;
+  open?: boolean;
+  trailing?: React.ReactNode;
 }) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-2xl border border-line bg-surface p-3">
+  const content = (
+    <>
       <div className="flex min-w-0 items-center gap-3">
         {photo ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -494,12 +589,40 @@ function Row({
           </div>
         )}
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-ink">{name}</p>
+          <p className="flex items-center gap-1 text-sm font-semibold text-ink">
+            <span className="truncate">{name}</span>
+            {verified && (
+              <span title="Has a Paytrol account" className="shrink-0 text-primary">
+                <VerifiedIcon size={15} />
+                <span className="sr-only">Has a Paytrol account</span>
+              </span>
+            )}
+          </p>
           {subtitle && <p className="truncate text-xs text-muted">{subtitle}</p>}
         </div>
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
-    </div>
+      {trailing}
+      {onClick && (
+        <ChevronDownIcon
+          size={18}
+          className={cn('shrink-0 text-muted transition-transform', open && 'rotate-180')}
+        />
+      )}
+    </>
+  );
+
+  if (!onClick) {
+    return <div className="flex min-h-16 items-center justify-between gap-3 p-3">{content}</div>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-expanded={open}
+      className="flex min-h-16 w-full items-center justify-between gap-3 p-3 text-left hover:bg-surface-soft"
+    >
+      {content}
+    </button>
   );
 }
 

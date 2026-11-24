@@ -7,6 +7,7 @@ import {
   updateDocument,
 } from '@/lib/db';
 import { roundMoney } from '@/lib/money';
+import { generateId } from '@/lib/utils';
 import type { Balance, GuestContact, Trip, TripParticipant, UserProfile } from '@/types';
 
 function getBalanceKey(uidA: string, uidB: string) {
@@ -143,4 +144,46 @@ export async function linkGuestContactsForUser(
       await linkGuestContact(contact, user);
     }
   }
+}
+
+export type CreateGuestResult =
+  | { ok: true; guest: GuestContact }
+  | { ok: false; status: number; error: string };
+
+/** Add a guest contact owned by `ownerUid`, optionally with an email to link later. */
+export async function createGuestContact(
+  ownerUid: string,
+  rawName: string,
+  rawEmail?: string | null
+): Promise<CreateGuestResult> {
+  const name = rawName.trim().replace(/\s+/g, ' ');
+  if (!name || name.length > 80) {
+    return { ok: false, status: 400, error: 'Enter a name up to 80 characters.' };
+  }
+  const email = rawEmail ? rawEmail.trim().toLowerCase() : null;
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return { ok: false, status: 400, error: 'Enter a valid email address.' };
+  }
+
+  const existingGuests = await queryDocuments<GuestContact>('guests', { ownerUid });
+  if (existingGuests.some((guest) => guest.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+    return { ok: false, status: 409, error: `You already have a guest called ${name}.` };
+  }
+  if (email && existingGuests.some((guest) => guest.email?.toLowerCase() === email)) {
+    return { ok: false, status: 409, error: 'You already have a guest with that email.' };
+  }
+
+  const id = generateId();
+  const now = new Date().toISOString();
+  const guest: GuestContact = {
+    id,
+    ownerUid,
+    guestUid: getGuestUid(ownerUid, id),
+    name,
+    email,
+    linkedUid: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  return { ok: true, guest: await createDocument('guests', guest) };
 }
